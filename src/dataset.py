@@ -13,14 +13,14 @@ the model or the training loop: python dataset.py --data-root /path/to/car_data
 """
 
 from __future__ import annotations
-import random
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable, Sequence
+import random
 
 import numpy as np
-import torch
 from PIL import Image, ImageOps
+import torch
 from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms
 
@@ -112,11 +112,11 @@ class ResizeLongestSide:
     closure. Lambdas cannot be pickled, which breaks `num_workers > 0` under
     the "spawn" start method and prevents checkpointing a transform object.
     """
-    def __init__(self, size: int, resample=Image.LANCZOS) -> None:
+    def __init__(self, size:int, resample=Image.LANCZOS):
         self.size = size
         self.resample = resample
 
-    def __call__(self, image: Image.Image) -> Image.Image:
+    def __call__(self, image:Image.Image) -> Image.Image:
         width, height = image.size
         if width >= height:
             new_w, new_h = self.size, max(1, round(height * self.size / width))
@@ -129,25 +129,49 @@ class ResizeLongestSide:
 
 
 class PadToSquare:
-    """Pad the shorter side so the image becomes centered with squared canvas."""
+    """Pad the shorter side so the image 
+    becomes centered with squared canvas."""
 
-    def __init__(self, fill: int | tuple[int, int, int] = 0) -> None:
+    def __init__(self, fill: int | tuple[int, int, int]=0):
         self.fill = fill
 
     def __call__(self, image: Image.Image) -> Image.Image:
         width, height = image.size
         longest = max(width, height)
-        pad_w = longest - width
-        pad_h = longest - height
+        pad_w = max(0, longest - width)
+        pad_h = max(0, longest - height)
         border = (
             pad_w // 2,
             pad_h // 2,
             pad_w - pad_w // 2,
-            pad_h - pad_h // 2,
-        )
+            pad_h - pad_h // 2)
         return ImageOps.expand(image, border=border, fill=self.fill)
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}(fill={self.fill})"
 
+
+def get_transforms(
+    train = True,
+    image_size = 448,
+    mean = IMAGENET_MEAN,
+    std = IMAGENET_STD) -> transforms.Compose:
+    """
+    Build the augmentation pipeline.
+    Photometric augmentations go first then geometric ones.
+    """
+    geometric_augs = [ResizeLongestSide(image_size), PadToSquare()]
+
+    if train:
+        stages = (
+            [transforms.ColorJitter(brightness=0.2, contrast=0.2)]
+            + geometric_augs
+            + [transforms.RandomHorizontalFlip()])
+    else:
+        stages = list(geometric_augs)
+
+    stages += [
+        transforms.ToTensor(),
+        transforms.Normalize(list(mean), list(std))]
     
+    return transforms.Compose(stages)   
