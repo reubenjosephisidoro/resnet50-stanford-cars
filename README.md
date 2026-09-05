@@ -49,6 +49,8 @@ Higher-level features adapt first while preserving stable low-level ones, reduci
 
 ## **Results**
 
+### **With Validation Split**
+
 | Metric | Value |
 |---------|--------|
 | **Loss** | 1.3082 |
@@ -58,11 +60,19 @@ Higher-level features adapt first while preserving stable low-level ones, reduci
 | **F1-Score** | 0.9110 |
 | **Inference Time** | 00:01:37 |
 
-&nbsp;&nbsp;&nbsp;&nbsp;🦦 The current setup achieves top-1 accuracy of approximately 91%  
-&nbsp;&nbsp;&nbsp;&nbsp;🦦 We have taken 10% of the training set for validation (e.g., trigger early stopping)  
-&nbsp;&nbsp;&nbsp;&nbsp;🦦 We can improve accuracy (and other metrics) slighly above current if we use the training set in its entirety.  
-&nbsp;&nbsp;&nbsp;&nbsp;🦦 However, we refrain from using the test set until the final eval.  
-&nbsp;&nbsp;&nbsp;&nbsp;🦦 This is to ensure an unbiased assessment of the model's generalization performance.  
+&nbsp;&nbsp;&nbsp;&nbsp;🦦 The setup achieves top-1 accuracy of 91.17%    
+&nbsp;&nbsp;&nbsp;&nbsp;🦦 We have taken 10% of the training set for validation   
+&nbsp;&nbsp;&nbsp;&nbsp;🦦 We can improve accuracy (and other metrics) slighly above current if we use the training set in its entirety.    
+&nbsp;&nbsp;&nbsp;&nbsp;🦦 However, we refrain from using the test set until the final eval.    
+
+### **Without a Validation Split**
+<img width="651" height="330" alt="image" src="https://github.com/user-attachments/assets/e76e3732-ad6b-4be8-94d1-05aa88a1bc39" />
+
+&nbsp;&nbsp;&nbsp;&nbsp;🦦 The current setup has best top-1 accuracy of 91.67% (made on Stage 3)    
+&nbsp;&nbsp;&nbsp;&nbsp;🦦 The bulk of meaningful tuning happened in Stage 1, where only the fc and layer4 layers are trainable  
+&nbsp;&nbsp;&nbsp;&nbsp;🦦 Stages 2 and 3 oscillated and provided little contributions to the validation metrics that seem to be already at near peak after Stage 1    
+&nbsp;&nbsp;&nbsp;&nbsp;🦦 Looking at the graphs, the model fitted the training set but still generalizes okay to the validation (test) set with consistent accuracy gaps
+&nbsp;&nbsp;&nbsp;&nbsp;🦦 The gap between training and test accuracies is consistent throughout Stages 2 and 3 at ~0.08 to ~0.09   
 
 ## **How to Run**
 ### Option 1 - Run Locally
