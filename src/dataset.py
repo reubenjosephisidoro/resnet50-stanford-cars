@@ -1,12 +1,12 @@
 """The data pipeline for the Stanford Cars ResNet50 fine-tuning experiment.
 This has been extracted from the exploratory notebook, covering:
 
-    - The discovery (and retrieval) of image paths and their 
+    - The discovery and retrieval of image paths and their 
       string labels from a class-folder layout
-    - The building of a canonical class-name->integer-id mapping
-    - Resize + pad transforms that ensures to preserve aspect ratio
+    - The building of a canonical class name --> integer id mapping
+    - Resize + pad transforms that ensures aspect ratio is preserved
     - The CarImageDataset map-style dataset
-    - Construction of a deterministic DataLoader object
+    - Construction of a DataLoader object with deterministic behavior
 
 This module can be run and exercised on its own because it does not import 
 the model or the training loop: python dataset.py --data-root /path/to/car_data
@@ -15,8 +15,8 @@ the model or the training loop: python dataset.py --data-root /path/to/car_data
 from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Iterable, Sequence
 import random
+from typing import Callable, Iterable, Sequence
 
 import numpy as np
 from PIL import Image, ImageOps
@@ -52,28 +52,28 @@ class DataConfig:
     so image size/normalization constants are all here in one place.
     """
 
-    train_dir: str
-    test_dir: str
-    cars_meta_path: str | None = None
-    image_size: int = 448
-    batch_size: int = 32
-    num_workers: int = 2
-    pin_memory: bool = True
-    seed: int = 42
+    train_dir:str
+    test_dir:str
+    cars_meta_path:str|None = None
+    image_size:int = 448
+    batch_size:int = 32
+    num_workers:int = 2
+    pin_memory:bool = True
+    seed:int = 42
 
     # Fraction of the training set that will be taken out for validation. 
-    # The updated notebook ran with 0.0 (evaluating directly on the test set) 
-    # Keep that as the default so results stay comparable, 
-    # but make a real holdout one argument away.
-    val_split: float = 0.0
-    mean: Sequence[float] = IMAGENET_MEAN
-    std: Sequence[float] = IMAGENET_STD
+    # The updated notebook ran with 0.0 val split (evaluating directly 
+    # on the test set). Keep that as the default so results 
+    # stay comparable, but make a validation holdout easily doable.
+    val_split:float = 0.0
+    mean:Sequence[float] = IMAGENET_MEAN
+    std:Sequence[float] = IMAGENET_STD
 
 
 # 2. REPRODUCIBILITY
-def set_seed(seed: int = 42, deterministic: bool = True) -> None:
+def set_seed(seed=42, deterministic=True) -> None:
     """Seed all RNGs in the pipeline.
-    Note: does not affect DataLoader workers, 
+    Note: this does not affect DataLoader workers, 
     which are handled separately in seed_worker().
     """
 
@@ -89,7 +89,7 @@ def set_seed(seed: int = 42, deterministic: bool = True) -> None:
         torch.backends.cudnn.benchmark = False
 
 
-def seed_worker(worker_id: int) -> None:  # noqa: ARG001 - signature fixed by torch
+def seed_worker(worker_id:int) -> None:  
     """Give each DataLoader worker a deterministic but 
     distinct seed when they are instantiated."""
     worker_seed = torch.initial_seed() % 2**32
@@ -97,7 +97,7 @@ def seed_worker(worker_id: int) -> None:  # noqa: ARG001 - signature fixed by to
     random.seed(worker_seed)
 
 
-def _make_generator(seed: int) -> torch.Generator:
+def _make_generator(seed) -> torch.Generator:
     generator = torch.Generator()
     generator.manual_seed(seed)
     return generator
@@ -109,10 +109,10 @@ class ResizeLongestSide:
     the goal of preserving aspect ratio.
 
     Here, it becomes a callable class rather than transforms.Lambda wrapping a
-    closure. Lambdas cannot be pickled, which breaks `num_workers > 0` under
+    closure. Lambdas cannot be pickled, which breaks num_workers>0 under
     the "spawn" start method and prevents checkpointing a transform object.
     """
-    def __init__(self, size:int, resample=Image.LANCZOS):
+    def __init__(self, size, resample=Image.LANCZOS):
         self.size = size
         self.resample = resample
 
@@ -124,30 +124,30 @@ class ResizeLongestSide:
             new_w, new_h = max(1, round(width * self.size / height)), self.size
         return image.resize((new_w, new_h), self.resample)
 
-    def __repr__(self) -> str:
+    def __repr__(self):
         return f"{type(self).__name__}(size={self.size})"
 
 
 class PadToSquare:
     """Pad the shorter side so the image 
-    becomes centered with squared canvas."""
+    becomes centered with square canvas."""
 
-    def __init__(self, fill: int | tuple[int, int, int]=0):
+    def __init__(self, fill:int|tuple[int,int,int]=0):
         self.fill = fill
 
-    def __call__(self, image: Image.Image) -> Image.Image:
+    def __call__(self, image:Image.Image) -> Image.Image:
         width, height = image.size
         longest = max(width, height)
-        pad_w = max(0, longest - width)
-        pad_h = max(0, longest - height)
+        pad_w = max(0, longest-width)
+        pad_h = max(0, longest-height)
         border = (
-            pad_w // 2,
-            pad_h // 2,
-            pad_w - pad_w // 2,
-            pad_h - pad_h // 2)
+            pad_w//2,
+            pad_h//2,
+            pad_w - pad_w//2,
+            pad_h - pad_h//2)
         return ImageOps.expand(image, border=border, fill=self.fill)
 
-    def __repr__(self) -> str:
+    def __repr__(self):
         return f"{type(self).__name__}(fill={self.fill})"
 
 
@@ -168,10 +168,39 @@ def get_transforms(
             + geometric_augs
             + [transforms.RandomHorizontalFlip()])
     else:
-        stages = list(geometric_augs)
+        stages = geometric_augs
 
     stages += [
         transforms.ToTensor(),
         transforms.Normalize(list(mean), list(std))]
     
     return transforms.Compose(stages)   
+
+
+# 4. GET DATASET PATHS AND LABELS
+def get_img_paths_and_labels(
+    base_dir:str|Path,
+    extensions=(".jpg",".jpeg",".png")) -> tuple[list[Path], list[str]]:
+    """Collects (paths, labels) from a 
+    `base_dir/class_name/*.jpg` tree structure.
+
+    Results are sorted. Path.glob returns entries in order similar 
+    to what is in the filesystem, which can vary between machines 
+    and filesystems, so an unsorted scan silently breaks reproducibility
+    of any split derived from it.
+    """
+    base = Path(base_dir)
+    if not base.is_dir():
+        raise FileNotFoundError(f"Image directory does not exist: {base}")
+
+    suffixes = {ext for ext in extensions}
+
+    # Sorting yourself is the only way to ensure sorted order
+    paths = sorted(p for p in base.glob("*/*") 
+                   if p.is_file() and p.suffix.lower() in suffixes)
+    
+    if not paths:
+        raise FileNotFoundError(f"No images with {sorted(suffixes)} found under {base}")
+
+    labels = [p.parent.name for p in paths]
+    return paths, labels
