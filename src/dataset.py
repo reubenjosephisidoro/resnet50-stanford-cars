@@ -204,3 +204,46 @@ def get_img_paths_and_labels(
 
     labels = [p.parent.name for p in paths]
     return paths, labels
+
+
+def _sanitise(name):
+    """
+    Match a metadata class name to its folder name on disk.
+    We cannot put a slash in a directory name, so the dataset's folders use a
+    hyphen instead. This is shown when "Ram C/V Cargo Van Minivan 2012" become
+    "Ram C-V Cargo Van Minivan 2012" in the notebook. That's the only class it 
+    affects right now, but replacing every slash is the same amount of work 
+    and won't need revisiting.
+    """
+    return name.replace("/", "-").strip()
+
+
+def load_class_names(cars_meta_path, fallback_dir):
+    """Return class names in canonical order.
+
+    Prefers the official cars_meta.mat ordering so integer ids line up with
+    the published class ids. Falls back to sorted folder names, which is a
+    different ordering but self-consistent and dependency-free.
+    """
+    if cars_meta_path is not None:
+        from scipy.io import loadmat  # local import: only needed on this path
+
+        meta = loadmat(str(cars_meta_path))
+        return [_sanitise(cls[0]) for cls in meta["class_names"][0]]
+
+    if fallback_dir is None:
+        raise ValueError("Provide either cars_meta_path or fallback_dir")
+
+    base = Path(fallback_dir)
+    names = sorted(p.name for p in base.iterdir() if p.is_dir())
+    if not names:
+        raise FileNotFoundError(f"No class subdirectories found under {base}")
+    return names
+
+
+def build_label_map(class_names:Sequence[str]) -> dict[str, int]:
+    """Map class name to a 0-indexed id (PyTorch expects 0-indexed targets)."""
+    mapping = {name: idx for idx, name in enumerate(class_names)}
+    if len(mapping) != len(class_names):
+        raise ValueError("Duplicate class names after sanitising")
+    return mapping
