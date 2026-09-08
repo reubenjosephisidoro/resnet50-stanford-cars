@@ -208,12 +208,13 @@ def get_img_paths_and_labels(
 
 def _sanitise(name):
     """
-    Match a metadata class name to its folder name on disk.
+    Match a metadata class name (from cars_meta.mat) to its folder name on disk.  
     We cannot put a slash in a directory name, so the dataset's folders use a
     hyphen instead. This is shown when "Ram C/V Cargo Van Minivan 2012" become
     "Ram C-V Cargo Van Minivan 2012" in the notebook. That's the only class it 
-    affects right now, but replacing every slash is the same amount of work 
-    and won't need revisiting.
+    affects right now. Running the replacement across every name is going to be     
+    a no-op for the other 195 classes, so the general form is safe to apply blindly   
+    but it will be useful if the dataset ever ships another class with a slash in it.  
     """
     return name.replace("/", "-").strip()
 
@@ -221,14 +222,15 @@ def _sanitise(name):
 def load_class_names(cars_meta_path, fallback_dir):
     """Return class names in canonical order.
 
-    Prefers the official cars_meta.mat ordering so integer ids line up with
-    the published class ids. Falls back to sorted folder names, which is a
-    different ordering but self-consistent and dependency-free.
+    Prefers the ordering used in the official cars_meta.mat so integer ids are arranged in a
+    way that aligns with the published class ids. This falls back to sorted folder names, 
+    which is a different ordering but self-consistent and dependency-free.
     """
     if cars_meta_path is not None:
-        from scipy.io import loadmat  # local import: only needed on this path
+        from scipy.io import loadmat  # local import only needed on this path
 
         meta = loadmat(str(cars_meta_path))
+        # Run the slash to hyphen replacement. 195 classes are no-op except one.
         return [_sanitise(cls[0]) for cls in meta["class_names"][0]]
 
     if fallback_dir is None:
@@ -247,3 +249,49 @@ def build_label_map(class_names:Sequence[str]) -> dict[str, int]:
     if len(mapping) != len(class_names):
         raise ValueError("Duplicate class names after sanitising")
     return mapping
+
+
+# 4. DATASET SAMPLE GETTER
+class CarImageDataset(Dataset):
+    """Map-style dataset over image paths with string labels.
+
+    `__getitem__` returns (image, label_id, label_str). The string label
+    is included for error analysis and plotting. The default collate function 
+    turns it into a list of strings, so training loops that do
+    not need it can unpack with `for images, labels, _ in loader`.
+    """
+
+    def __init__(self, paths, str_labels, lbl_id_map, transform):
+        if len(paths) != len(str_labels):
+            raise ValueError(
+                f"paths and str_labels differ in length: "
+                f"{len(paths)} vs {len(str_labels)}"
+            )
+
+        unknown = sorted(set(str_labels) - set(lbl_id_map))
+        if unknown:
+            preview = ", ".join(unknown[:5])
+            raise KeyError(
+                f"{len(unknown)} label(s) missing from the label map: {preview}"
+            )
+
+        self.paths = [Path(p) for p in paths]
+        self.str_labels = list(str_labels)
+        self.transform = transform
+
+        self.cls_to_id = dict(lbl_id_map)
+        self.id_to_cls = {i: c for c, i in self.cls_to_id.items()}
+        self.cls_ids = [self.cls_to_id[label] for label in self.str_labels]
+
+    def __len__(self) -> int:
+        return len(self.paths)
+
+    def __getitem__(self, idx: int):
+        image = Image.open(self.paths[idx]).convert("RGB")
+        label_id = self.cls_ids[idx]
+        label_str = self.str_labels[idx]
+
+        if self.transform is not None:
+            image = self.transform(image)
+
+        return image, label_id, label_str
