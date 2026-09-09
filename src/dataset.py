@@ -1,4 +1,5 @@
-"""The data pipeline for the Stanford Cars ResNet50 fine-tuning experiment.
+"""
+The data pipeline for the Stanford Cars ResNet50 fine-tuning experiment.
 This has been extracted from the exploratory notebook, covering:
 
     - The discovery and retrieval of image paths and their 
@@ -8,7 +9,7 @@ This has been extracted from the exploratory notebook, covering:
     - The CarImageDataset map-style dataset
     - Construction of a DataLoader object with deterministic behavior
 
-This module can be run and exercised on its own because it does not import 
+This module can be run on its own because it does not import 
 the model or the training loop: python dataset.py --data-root /path/to/car_data
 """
 
@@ -206,15 +207,15 @@ def get_img_paths_and_labels(
     return paths, labels
 
 
-def _sanitise(name):
+def _sanitize(name):
     """
     Match a metadata class name (from cars_meta.mat) to its folder name on disk.  
-    We cannot put a slash in a directory name, so the dataset's folders use a
-    hyphen instead. This is shown when "Ram C/V Cargo Van Minivan 2012" become
+    We cannot put a slash in a directory name (the dataset's folders use a
+    hyphen instead). This is shown when "Ram C/V Cargo Van Minivan 2012" become
     "Ram C-V Cargo Van Minivan 2012" in the notebook. That's the only class it 
     affects right now. Running the replacement across every name is going to be     
     a no-op for the other 195 classes, so the general form is safe to apply blindly   
-    but it will be useful if the dataset ever ships another class with a slash in it.  
+    but it will be useful if in the dataset, we add another class with a slash in it.  
     """
     return name.replace("/", "-").strip()
 
@@ -223,15 +224,15 @@ def load_class_names(cars_meta_path, fallback_dir):
     """Return class names in canonical order.
 
     Prefers the ordering used in the official cars_meta.mat so integer ids are arranged in a
-    way that aligns with the published class ids. This falls back to sorted folder names, 
+    way that aligns with the published class ids. This can fall back to sorted folder names, 
     which is a different ordering but self-consistent and dependency-free.
     """
     if cars_meta_path is not None:
-        from scipy.io import loadmat  # local import only needed on this path
+        from scipy.io import loadmat  # import only needed here
 
         meta = loadmat(str(cars_meta_path))
         # Run the slash to hyphen replacement. 195 classes are no-op except one.
-        return [_sanitise(cls[0]) for cls in meta["class_names"][0]]
+        return [_sanitize(cls[0]) for cls in meta["class_names"][0]]
 
     if fallback_dir is None:
         raise ValueError("Provide either cars_meta_path or fallback_dir")
@@ -243,47 +244,41 @@ def load_class_names(cars_meta_path, fallback_dir):
     return names
 
 
-def build_label_map(class_names:Sequence[str]) -> dict[str, int]:
+def build_label_map(class_names:Sequence[str]) -> dict:
     """Map class name to a 0-indexed id (PyTorch expects 0-indexed targets)."""
     mapping = {name: idx for idx, name in enumerate(class_names)}
-    if len(mapping) != len(class_names):
-        raise ValueError("Duplicate class names after sanitising")
     return mapping
 
 
 # 4. DATASET SAMPLE GETTER
 class CarImageDataset(Dataset):
-    """Map-style dataset over image paths with string labels.
-
+    """
+    Map-style dataset over image paths with string labels.
     `__getitem__` returns (image, label_id, label_str). The string label
-    is included for error analysis and plotting. The default collate function 
-    turns it into a list of strings, so training loops that do
-    not need it can unpack with `for images, labels, _ in loader`.
+    is included for error analysis and plotting.
     """
 
     def __init__(self, paths, str_labels, lbl_id_map, transform):
         if len(paths) != len(str_labels):
             raise ValueError(
-                f"paths and str_labels differ in length: "
-                f"{len(paths)} vs {len(str_labels)}"
-            )
+                f"paths and str_labels have different lengths: "
+                f"{len(paths)} vs. {len(str_labels)}")
 
         unknown = sorted(set(str_labels) - set(lbl_id_map))
         if unknown:
             preview = ", ".join(unknown[:5])
             raise KeyError(
-                f"{len(unknown)} label(s) missing from the label map: {preview}"
-            )
+                f"{len(unknown)} label(s) missing from the label map: {preview}")
 
-        self.paths = [Path(p) for p in paths]
-        self.str_labels = list(str_labels)
+        self.paths = paths
+        self.str_labels = str_labels
         self.transform = transform
 
-        self.cls_to_id = dict(lbl_id_map)
+        self.cls_to_id = lbl_id_map
         self.id_to_cls = {i: c for c, i in self.cls_to_id.items()}
         self.cls_ids = [self.cls_to_id[label] for label in self.str_labels]
 
-    def __len__(self) -> int:
+    def __len__(self):
         return len(self.paths)
 
     def __getitem__(self, idx: int):
@@ -295,3 +290,40 @@ class CarImageDataset(Dataset):
             image = self.transform(image)
 
         return image, label_id, label_str
+
+
+# 5. FACTORIES
+def build_datasets(config):
+    """Return (train_ds, val_ds, test_ds, label_map).
+
+    `val_ds` is `None` when `config.val_split` is 0. This reproduces the
+    notebook's setup of training on all available data (0% validation split)
+    and evaluating against the test set each epoch.
+    """
+    train_paths, train_labels = get_img_paths_and_labels(config.train_dir)
+    test_paths, test_labels = get_img_paths_and_labels(config.test_dir)
+
+    class_names = load_class_names(config.cars_meta_path, fallback_dir=config.train_dir)
+    label_map = build_label_map(class_names)
+
+    val_paths = []
+    val_labels = []
+    if config.val_split > 0:
+        from sklearn.model_selection import train_test_split
+
+        train_paths, val_paths, train_labels, val_labels = train_test_split(
+            train_paths,
+            train_labels,
+            test_size=config.val_split,
+            shuffle=True,
+            stratify=train_labels,
+            random_state=config.seed)
+
+    train_tf = get_transforms(True, config.image_size, config.mean, config.std)
+    eval_tf = get_transforms(False, config.image_size, config.mean, config.std)
+
+    train_ds = CarImageDataset(train_paths, train_labels, label_map, train_tf)
+    test_ds = CarImageDataset(test_paths, test_labels, label_map, eval_tf)
+    val_ds = (CarImageDataset(val_paths, val_labels, label_map, eval_tf) if val_paths else None)
+
+    return train_ds, val_ds, test_ds, label_map
