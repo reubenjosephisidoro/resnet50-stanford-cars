@@ -2,8 +2,7 @@
 The data pipeline for the Stanford Cars ResNet50 fine-tuning experiment.
 This has been extracted from the exploratory notebook, covering:
 
-    - The discovery and retrieval of image paths and their 
-      string labels from a class-folder layout
+    - The discovery and retrieval of image paths and their string labels from a class-folder layout
     - The building of a canonical class name --> integer id mapping
     - Resize + pad transforms that ensures aspect ratio is preserved
     - The CarImageDataset map-style dataset
@@ -17,7 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import random
-from typing import Callable, Iterable, Sequence
+from typing import Sequence
 
 import numpy as np
 from PIL import Image, ImageOps
@@ -39,7 +38,7 @@ __all__ = [
     "set_seed",
     "seed_worker"]
 
-# ImageNet statistics, since the backbone is pretrained on ImageNet
+# ImageNet statistics since the backbone is pretrained on ImageNet
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_STD = (0.229, 0.224, 0.225)
 NUM_CLASSES = 196
@@ -65,14 +64,14 @@ class DataConfig:
     # Fraction of the training set that will be taken out for validation. 
     # The updated notebook ran with 0.0 val split (evaluating directly 
     # on the test set). Keep that as the default so results 
-    # stay comparable, but make a validation holdout easily doable.
+    # stay comparable, but here it makes a validation holdout easily doable.
     val_split:float = 0.0
     mean:Sequence[float] = IMAGENET_MEAN
     std:Sequence[float] = IMAGENET_STD
 
 
 # 2. REPRODUCIBILITY
-def set_seed(seed=42, deterministic=True) -> None:
+def set_seed(seed=42, deterministic=True):
     """Seed all RNGs in the pipeline.
     Note: this does not affect DataLoader workers, 
     which are handled separately in seed_worker().
@@ -188,8 +187,8 @@ def get_img_paths_and_labels(
     Results are sorted. Path.glob returns entries in order similar 
     to what is in the filesystem, which can vary between machines 
     and filesystems, so an unsorted scan silently breaks reproducibility
-    of any split derived from it.
-    """
+    of any split derived from it."""
+
     base = Path(base_dir)
     if not base.is_dir():
         raise FileNotFoundError(f"Image directory does not exist: {base}")
@@ -327,3 +326,77 @@ def build_datasets(config):
     val_ds = (CarImageDataset(val_paths, val_labels, label_map, eval_tf) if val_paths else None)
 
     return train_ds, val_ds, test_ds, label_map
+
+
+def build_dataloaders(config):
+    """Return (train_loader, eval_loader, test_loader, label_map).
+
+    eval_loader is the per-epoch evaluation loader. It serves as the validation holdout
+    when config.val_split > 0, otherwise it's the test loader. When they are the
+    same object, remember that "validation" metrics are test metrics and can't
+    be used for model selection without leaking.
+    """
+    train_ds, val_ds, test_ds, label_map = build_datasets(config)
+    generator = _make_generator(config.seed)
+
+    common = dict(
+        batch_size=config.batch_size,
+        num_workers=config.num_workers,
+        pin_memory=config.pin_memory,
+        generator=generator,
+        worker_init_fn=seed_worker)
+
+    train_loader = DataLoader(train_ds, shuffle=True, **common)
+    test_loader = DataLoader(test_ds, shuffle=False, **common)
+    eval_loader = (DataLoader(val_ds, shuffle=False, **common) 
+                   if val_ds is not None else test_loader)
+
+    return train_loader, eval_loader, test_loader, label_map
+
+
+# SMOKE TEST
+def _smoke_test(config):
+    set_seed(config.seed)
+
+    train_loader, eval_loader, test_loader, label_map = build_dataloaders(config)
+
+    print(f"Classes:          {len(label_map)}")
+    print(f"Train samples:    {len(train_loader.dataset)}")
+    print(f"Eval samples:     {len(eval_loader.dataset)}")
+    print(f"Test samples:     {len(test_loader.dataset)}")
+    print(f"Eval is test set: {eval_loader.dataset is test_loader.dataset}")
+
+    images, label_ids, label_strs = next(iter(train_loader))
+    print(f"Batch images:     {tuple(images.shape)} {images.dtype}")
+    print(f"Batch label ids:  {tuple(label_ids.shape)} {label_ids.dtype}")
+    print(f"Value range:      [{images.min():.3f}, {images.max():.3f}]")
+    print(f"First label:      {label_ids[0].item()} -> {label_strs[0]}")
+
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Smoke-test the data pipeline.")
+    parser.add_argument(
+        "--data-root",
+        required=True,
+        help="Directory containing train/ and test/ class-folder subdirectories.")
+    
+    parser.add_argument("--cars-meta", default=None, help="Path to cars_meta.mat.")
+    parser.add_argument("--image-size", type=int, default=448)
+    parser.add_argument("--batch-size", type=int, default=32)
+    parser.add_argument("--num-workers", type=int, default=2)
+    parser.add_argument("--val-split", type=float, default=0.0)
+    args = parser.parse_args()
+
+    root = Path(args.data_root)
+    _smoke_test(
+        DataConfig(
+            train_dir=str(root / "train"),
+            test_dir=str(root / "test"),
+            cars_meta_path=args.cars_meta,
+            image_size=args.image_size,
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            val_split=args.val_split)
+        )
