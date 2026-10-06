@@ -89,7 +89,7 @@ def set_seed(seed=42, deterministic=True):
         torch.backends.cudnn.benchmark = False
 
 
-def seed_worker(worker_id:int) -> None:  
+def seed_worker(worker_id):  
     """Give each DataLoader worker a deterministic but 
     distinct seed when they are instantiated."""
     worker_seed = torch.initial_seed() % 2**32
