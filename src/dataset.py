@@ -110,7 +110,8 @@ class ResizeLongestSide:
 
     Here, it becomes a callable class rather than transforms.Lambda wrapping a
     closure. Lambdas cannot be pickled, which breaks num_workers>0 under
-    the "spawn" start method and prevents checkpointing a transform object.
+    the "spawn" start method and prevents checkpointing a transform object (save
+    the transform pipeline to disk).
     """
     def __init__(self, size, resample=Image.LANCZOS):
         self.size = size
